@@ -1,0 +1,154 @@
+<!doctype html>
+<!--
+  Viora — wrapper HTTPS do player de trailers do YouTube (ADR-015).
+
+  Por que existe: o app da TV (Tizen/WebOS) roda em `file://`, origem que
+  nunca envia o cabeçalho `Referer`; o YouTube recusa embeds sem ele (erro
+  153). Esta página, servida de uma origem HTTPS real, incorpora o player
+  oficial (YouTube IFrame Player API) e conversa com o app por `postMessage`.
+
+  ARQUIVO 100% AUTOCONTIDO: nenhuma dependência do Companion App (nem
+  build, nem import, nem asset). Hospedagem transitória em
+  `apps/companion/public/`; destino previsto: projeto Vercel estático
+  próprio — basta copiar este arquivo.
+
+  Uso: `trailer-wrapper.html?v=<id de 11 caracteres>`
+
+  Protocolo (toda mensagem é um objeto com `source: 'viora-trailer'`):
+    página → app (`window.parent`):
+      { type: 'READY' }                         player pronto (já tocando)
+      { type: 'STATE', state: <YT.PlayerState> } mudança de estado
+      { type: 'ENDED' }                         fim do vídeo (auto-close)
+      { type: 'ERROR', code: <number|string> }  erro do player, id inválido
+                                                ou falha ao carregar a API
+    app → página:
+      { type: 'PLAY' } | { type: 'PAUSE' }
+
+  Segurança: as mensagens para o app vão com `targetOrigin: '*'` porque a
+  origem do app é `file://` (opaca, impossível de endereçar) e o conteúdo
+  não é sensível (só estado do player). Comandos só são aceitos quando
+  vindos da própria janela que incorporou esta página (`event.source ===
+  window.parent`) — e só podem tocar/pausar o vídeo.
+-->
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Viora Trailer</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #player,
+      #player iframe {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #000;
+      }
+
+      /* No fim do vídeo o player some na hora, antes de a grade de
+         recomendações do YouTube ter chance de aparecer enquanto o app
+         desmonta o modal. */
+      body.ended #player {
+        visibility: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="player"></div>
+    <script>
+      (function () {
+        'use strict';
+
+        var SOURCE = 'viora-trailer';
+        var VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+        var STATE_ENDED = 0;
+
+        var player = null;
+
+        function send(message) {
+          if (window.parent === window) {
+            return;
+          }
+          message.source = SOURCE;
+          window.parent.postMessage(message, '*');
+        }
+
+        var videoId = new URLSearchParams(window.location.search).get('v');
+        if (videoId === null || !VIDEO_ID_PATTERN.test(videoId)) {
+          send({ type: 'ERROR', code: 'invalid_video_id' });
+          return;
+        }
+
+        window.addEventListener('message', function (event) {
+          if (event.source !== window.parent || player === null) {
+            return;
+          }
+          var data = event.data;
+          if (data === null || typeof data !== 'object' || data.source !== SOURCE) {
+            return;
+          }
+          if (data.type === 'PLAY') {
+            player.playVideo();
+          } else if (data.type === 'PAUSE') {
+            player.pauseVideo();
+          }
+        });
+
+        window.onYouTubeIframeAPIReady = function () {
+          player = new window.YT.Player('player', {
+            videoId: videoId,
+            width: '100%',
+            height: '100%',
+            playerVars: {
+              autoplay: 1,
+              controls: 1,
+              rel: 0,
+              modestbranding: 1,
+              iv_load_policy: 3,
+              disablekb: 1,
+              playsinline: 1,
+              enablejsapi: 1,
+              origin: window.location.origin,
+            },
+            events: {
+              onReady: function (event) {
+                event.target.playVideo();
+                send({ type: 'READY' });
+              },
+              onStateChange: function (event) {
+                if (event.data === STATE_ENDED) {
+                  document.body.className = 'ended';
+                  send({ type: 'ENDED' });
+                  return;
+                }
+                send({ type: 'STATE', state: event.data });
+              },
+              onError: function (event) {
+                send({ type: 'ERROR', code: event.data });
+              },
+            },
+          });
+        };
+
+        var script = document.createElement('script');
+        script.src = 'https://www.youtube.com/iframe_api';
+        script.async = true;
+        script.onerror = function () {
+          send({ type: 'ERROR', code: 'api_load_failed' });
+        };
+        document.head.appendChild(script);
+      })();
+    </script>
+  </body>
+</html>
