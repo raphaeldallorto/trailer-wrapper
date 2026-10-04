@@ -23,12 +23,14 @@
                                                 ou falha ao carregar a API
     app → página:
       { type: 'PLAY' } | { type: 'PAUSE' }
+      { type: 'SEEK_FWD' } | { type: 'SEEK_BWD' }  ±10 s, limitado a
+                                                  [0, duração do vídeo]
 
   Segurança: as mensagens para o app vão com `targetOrigin: '*'` porque a
   origem do app é `file://` (opaca, impossível de endereçar) e o conteúdo
   não é sensível (só estado do player). Comandos só são aceitos quando
   vindos da própria janela que incorporou esta página (`event.source ===
-  window.parent`) — e só podem tocar/pausar o vídeo.
+  window.parent`) — e só podem tocar/pausar/avançar/retroceder o vídeo.
 -->
 <html lang="pt-BR">
   <head>
@@ -73,8 +75,22 @@
         var SOURCE = 'viora-trailer';
         var VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
         var STATE_ENDED = 0;
+        var SEEK_STEP_SECONDS = 10;
 
         var player = null;
+
+        /** Avança/retrocede `delta` segundos, sem passar de 0 nem da duração (duração 0 = ainda desconhecida). */
+        function seekBy(delta) {
+          var duration = player.getDuration();
+          var target = player.getCurrentTime() + delta;
+          if (target < 0) {
+            target = 0;
+          }
+          if (duration > 0 && target > duration) {
+            target = duration;
+          }
+          player.seekTo(target, true);
+        }
 
         function send(message) {
           if (window.parent === window) {
@@ -102,6 +118,10 @@
             player.playVideo();
           } else if (data.type === 'PAUSE') {
             player.pauseVideo();
+          } else if (data.type === 'SEEK_FWD') {
+            seekBy(SEEK_STEP_SECONDS);
+          } else if (data.type === 'SEEK_BWD') {
+            seekBy(-SEEK_STEP_SECONDS);
           }
         });
 
