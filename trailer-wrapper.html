@@ -51,7 +51,10 @@
       #player,
       #player iframe {
         position: absolute;
-        inset: 0;
+        /* `top`/`left`, não `inset`: roda no iframe da TV, fora do build
+           (Lightning CSS), e o Chromium < 87 (Tizen 6.0) ignora `inset`. */
+        top: 0;
+        left: 0;
         width: 100%;
         height: 100%;
         border: 0;
